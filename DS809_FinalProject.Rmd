@@ -1,0 +1,493 @@
+---
+title: |
+  | Final Project
+  | DS 805: Statistical Learning
+author: |
+  | Tyler Merrick,Aleena Linson
+output: html_document
+---
+
+```{r setup, include=FALSE, tidy=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+options("kableExtra.html.bsTable" = T)
+
+library(ggplot2)
+library(gbm)
+library(lattice)
+library(MASS)
+library(ipred)
+library(class)
+#library(caret)
+library(vip)
+library(pROC)
+library(forecast)
+library(ROCR)
+library(e1071)
+library(kableExtra)
+library(Metrics)
+#library(ggfortify)
+#library(skimr)
+```
+
+## Data Requirements:
+
+- You can pick any data you want as long as it is a classification problem.
+- The data source used is:
+
+    - Kaggle <https://www.kaggle.com/yasserh/titanic-dataset>
+    
+- Variables in this data set include:
+  PassengerId - Passenger ID
+  Survived - Weather Survived or not: 0 = No, 1 = Yes
+  Pclass - Ticket class: 1 = 1st, 2 = 2nd, 3 = 3rd
+  Name - Name of the Passenger
+  Gender - male or female
+  Age - Age in Years
+  SibSp - No. of siblings / spouses aboard the Titanic
+  Parch - No. of parents / children aboard the Titanic
+  Ticket - Ticket number
+  Fare - Passenger fare
+  Embarked - Port of Embarkation:C = Cherbourg, Q = Queenstown, S = Southampton
+    
+- Read your data in R and call it df. For the rest of this document `y` refers to the variable you are predicting.
+- Predicting the variable "Survived"
+
+Below is the snapshot of the dataset:
+```{r}
+titanic=read.table("/Users/aleena/Desktop/MSBA/DS805/project/Titanic-Dataset.csv", header = TRUE, sep=",", dec=".")
+attach(titanic)
+titanic=titanic[,-8]
+head(titanic)
+```
+
+## The grading rubric can be found below:
+
++----------------+---------------+--------------------+-----------------------+
+|                | R code        | Decision/Why       | Communication         |
+|                |               |                    |  of findings          |
++================+===============+====================+=======================+
+| Percentage of  | 30%           | 35%                | 35%                   |
+| Assigned Points|               |                    |                       |
++----------------+---------------+--------------------+-----------------------+
+
+
+- **Decision/why?**: Explain your reasoning behind your choice of the procedure, set of variables and such for the question. 
+
+    - Explain why you use the procedure/model/variable
+    - To exceed this criterion, describe steps taken to implement the procedure in a non technical way.
+
+
+- **Communication of your findings**: Explain your results in terms of training MSE, testing MSE, and prediction of the variable `Y` 
+
+    - Explain why you think one model is better than the other.
+    - To exceed this criterion, explain your model and how it predicts `y` in a non technical way.
+
+
+## Part 1: Exploratory Data Analysis (20 points)
+
+1. Check for existence of NA's (missing data)
+```{r}
+titanic[titanic$Embarked == "","Embarked"] <- "S"
+table(titanic$Embarked)
+titanic=na.omit(titanic)
+head(titanic)
+```
+survived~ pclass+Sex+Age+SipSp+PArch+Fare+Embarked
+
+2. If necessary, classify all categorical variables **except the one you are predicting** as factors. Calculate the summary statistics of the entire data set. 
+
+```{r}
+titanic$Pclass<-as.factor(titanic$Pclass)
+titanic$Sex<-as.factor(titanic$Sex)
+titanic$Embarked<-as.factor(titanic$Embarked)
+titanic$Survived<- as.factor((titanic$Survived))
+str(titanic)
+```
+
+3. For the numerical variables, plot box plots based on values of `Survived`. Do you see a difference between the box plots for any of the variables you choose?
+
+According to this whisker plot we can that the median age for people that survived and people that died is approximately the same. Q1 and Q3 is higher for people that died. The max and minimum values are also significantly lower for people who survived. This plot reinforces our intuition on what we thought about this variable Age. 
+
+
+This variable represents the number of sibings and spouse aboard the Titanc. These two plots look identical, the only main difference is the outliers.
+
+The Parch corresponds to the number of parents or children aboard the Titanic. The mean value is identical for both categories. The spread is a bit different, Q3 is much higher for people that survived. It's a bit suprising but maybe these people had priority over people that had none to jump into the rescue boats. 
+
+This variable corresponds to the price people paid their tickets. The mean and Q3 is higher for people that survived. It seems like the price of the ticket was a variable of importance as well. 
+
+
+```{r}
+boxplot (Age~Survived,main = "Age",xlab = "Age",ylab = "Survived",col = "orange",border = "brown",horizontal = FALSE)
+boxplot (SibSp~Survived,main = "SipSp",xlab = "Age",ylab = "Survived",col = "orange",border = "brown",horizontal = FALSE)
+boxplot (Parch~Survived,main = "Parch",xlab = "Age",ylab = "Survived",col = "orange",border = "brown",horizontal = FALSE)
+boxplot (Fare~Survived,main = "Fare",xlab = "Age",ylab = "Survived",col = "orange",border = "brown",horizontal = FALSE)
+```
+
+4. For the categorical variables, plot bar charts for the different values of `y`. Do you see a difference between plots for any of the variables you choose?
+
+For the categorical variables, plot bar charts
+```{r}
+# Grouped Bar Plot
+counts <- table(titanic$Pclass,titanic$Survived)
+barplot(counts, main="Survival based on Gender",
+  xlab="Number of Male and female", col=c("light blue","light pink"),
+  legend = rownames(counts), beside=TRUE)
+
+counts <- table(titanic$Embarked,titanic$Survived)
+barplot(counts, main="Survival based on Gender",
+  xlab="Number of Male and female", col=c("light blue","light pink","red","yellow"),
+  legend = rownames(counts), beside=TRUE)
+
+counts <- table(titanic$Sex,titanic$Survived)
+barplot(counts, main="Survival based on Gender",
+  xlab="Number of Male and female", col=c("light blue","light pink","red","yellow"),
+  legend = rownames(counts), beside=TRUE)
+```
+
+6. Test/training separation: Separate your data into 80% training and 20% testing data. Do not forget to set seed. Please use the same separation for the whole assignment, as it is needed to be able to compare the models.
+```{r}
+set.seed(1)
+n=round(nrow(titanic)*.8)
+training=sample(nrow(titanic), n)
+train=titanic[training,]
+test=titanic[-training,]
+```
+
+
+## Part 2: Logistic Regression or LDA (15 points)
+
+1. Develop a classification model where the variable `y` is the dependent variable using the Logistic Regression or LDA, rest of the variables, and your training data set.
+
+```{r}
+xyplot(train$Fare~train$Age, groups=train$Survived, ylab="Fare", xlab="Age")
+```
+
+```{r}
+logfit<-glm(Survived~., data=train, family=binomial)
+summary(logfit) 
+```
+The logistic regression coefficients give the change in the log odds of the outcome for a one unit increase in the predictor variable. Here the variables Pclass, Sexmale,Age,SibSp are statistically significant.
+
+2.  Obtain the confusion matrix and compute the **testing error rate** based on the logistic regression classification.
+```{r}
+library(pROC)
+prob1<-predict(logfit, newdata=test, type="response")
+head(prob1,3)
+
+logpred=rep(0, nrow(test))
+logpred[prob1>=.5]=1
+head(logpred,3)
+
+table(logpred, True=test[,"Survived"])
+
+round( mean(logpred!=test[,"Survived"]),4)
+
+roc.test = roc(test$Survived ~ prob1, plot = TRUE, print.auc = TRUE)
+```
+
+
+3. Explain your choices and communicate your results.
+
+We started by plotting XY plot of fare and age to see how well data looks. Our data set is not well separable so we choose logistic regression as our first model in predictive analysis. The other reason why we choose logistic regression is because our dependent variable is in binary form. After running the model and making prediction using the test data set we where able to see an error rate of 25% which is pretty decent. And our area under curve is 0.794.Up to now we believe this is a good method since the prediction accuracy for logistic regression model is 74.13% which is good.
+
+## Part 3: KNN (15 points)
+
+1. Apply a KNN classification to the training data using.
+```{r}
+knn.train=cbind(train[,"PassengerId"], train[,"Sex"], train[,"Age"], train[,"SibSp"], train[,"Fare"], train[,"Embarked"])
+knn.test=cbind(test[,"PassengerId"], test[,"Sex"], test[,"Age"], test[,"SibSp"], test[,"Fare"], test[,"Embarked"])
+knn.trainLabels=train[,"Survived"]
+knn.testLabels=test[,"Survived"]
+```
+
+2.  Obtain the confusion matrix and compute the testing error rate based on the KNN classification.
+```{r}
+knn3 <- knn(train = knn.train, test = knn.test, cl = knn.trainLabels, k=3)
+table(knn3, knn.testLabels)
+1-mean(knn3==knn.testLabels)
+```
+
+```{r}
+knn5 <- knn(train = knn.train, test = knn.test, cl = knn.trainLabels, k=5)
+table(knn5, knn.testLabels)
+1-mean(knn5==knn.testLabels)
+```
+
+```{r}
+knn25=knn(knn.train,knn.test, cl = knn.trainLabels, k=25)
+table(knn25, knn.testLabels)
+1-mean(knn25==knn.testLabels)
+```
+
+```{r}
+set.seed(1234)
+k.grid=1:100
+error=rep(0, length(k.grid))
+
+for (i in seq_along(k.grid)) {
+  pred = knn(train = scale(knn.train), 
+             test  = scale(knn.test), 
+             cl    = knn.trainLabels, 
+             k     = k.grid[i])
+  error[i] = mean(knn.testLabels !=pred)
+}
+
+min(error)
+```
+
+
+```{r}
+plot(error, type = "b", col = "dodgerblue", cex = 1, pch = 20, 
+     xlab = "k, number of neighbors", ylab = "classification error")
+# add line for min error seen
+abline(h = min(error), col = "darkorange", lty = 3)
+```
+
+3. Explain your choices and communicate your results.
+
+We define our knn.train and knn.test using non categorical variables to estimate our dependent variable "Survived". K-Nearest Neighbors is using both training and testing data in its model. We tried three different values for k respectively k=3, k=5 and k=25. Usually a lower k will have a larger testing error. Given the number of observations we have, we decided to take k=25 to build our model. Around this area this was the lowest k that was hitting a low testing error. We estimated that it wouldn't impact the variance too much and have enough groups to classify the different data points. After looking at the plot, we saw that the minimum testing error is at k=25, k=[44,54], k=56, 58,59 and k=94, 96,97,98,99, 100. With this value for k, we obtain a testing error of approximately 30.77%. 
+
+## Part 4: Tree Based Model (15 points)
+
+1. Apply one of the following models to your training data: *Classification Tree, Random Forrest, Bagging or Boosting*
+
+```{r}
+titanic=read.table("/Users/aleena/Desktop/MSBA/DS805/project/Titanic-Dataset.csv", header = TRUE, sep=",", dec=".")
+titanic=titanic[,-8]
+
+titanic[titanic$Embarked == "","Embarked"] <- "S"
+titanic=na.omit(titanic)
+
+titanic$Pclass<-as.factor(titanic$Pclass)
+titanic$Sex<-as.factor(titanic$Sex)
+titanic$Embarked<-as.factor(titanic$Embarked)
+
+set.seed(1)
+n=round(nrow(titanic)*.8)
+training=sample(nrow(titanic), n)
+train=titanic[training,]
+test=titanic[-training,]
+```
+
+Boosting
+```{r}
+set.seed(123)
+model.boos <- gbm(formula = Survived ~ ., distribution="bernoulli", data=train, n.trees = 10000)
+print(model.boos)
+```
+
+```{r}
+summary(model.boos)
+```
+
+```{r}
+#Obtaining Predictions and Computing the Test Error Rate
+pred.boost=predict(model.boos, newdata=test,n.trees=10000, distribution="bernoulli", type="response")
+
+boostpred=ifelse(pred.boost < 0.5, 0, 1)
+
+#Prediction Accuracy
+accuracy(test[,"Survived"], boostpred)
+    
+table(true=factor(boostpred), 
+      factor(test$Survived))
+```
+
+```{r}
+# Using OOB
+ntree.oob.opt=gbm.perf(model.boos, method="OOB", oobag.curve=TRUE)
+```
+
+```{r}
+# Using CV
+set.seed(123)
+model.boos.cv <- gbm(Survived ~ ., 
+                       distribution = "bernoulli", 
+                       train,n.trees = 10000,
+                       cv.folds = 3)
+ntree.cv.opt=gbm.perf(model.boos.cv, method="cv")
+```
+
+```{r}
+print(paste0("Optimal ntrees (OOB Estimate): ", ntree.oob.opt))
+#OOB is the better option in this case
+print(paste0("Optimal ntrees (CV Estimate): ", ntree.cv.opt))
+```
+
+```{r}
+pred.oob=predict(object = model.boos, 
+                  newdata = test,
+                  n.trees = ntree.oob.opt)
+pred.cv=predict(object = model.boos.cv, 
+                  newdata = test,
+                  n.trees = ntree.cv.opt)
+auc1=auc(test$Survived, pred.oob)  #OOB
+# Compare AUC (Area Under the Curve)
+auc2=auc(test$Survived,pred.cv)  #CV 
+
+print(paste0("Test set AUC (OOB): ", round(auc1,3)))                         
+print(paste0("Test set AUC (CV): ", round(auc2,3)))
+#If they are close then go with the model that is easiest to explain
+```
+
+```{r}
+roc.test = roc(test$Survived ~ pred.oob, plot = TRUE, print.auc = TRUE)
+```
+
+
+3. Explain your choices and communicate your results.
+
+We chose the boosting model because it is fairly simple to use and is known for being the most accurate model when predicted correctly. In creating the original model, we can see that the top 4 most influential variables are Fare, Age, Sex, and Pclass. We predicted the model using the testing data with a fairly high accuracy of 0.7482517. Our model had originally used 10000 tree iterations which proved to be unnecessary as tested the model with both OOB and Cross Validation. OOB ended up being the better model in this case as it calculated the optimal number of trees to be 133 and CV only had 76. Overall, the OOB model was well fit with an Area Under the Curve (AUC) of 0.802.
+
+## Part 5: SVM (15 points)
+
+1. Apply an SVM model to your training data.
+
+```{r}
+#build svm model, setting required parameters
+svm_model<- svm(Survived ~ ., data = train, type = "C-classification", kernel = "linear", scale = FALSE, cost=0.1)
+svm_model
+```
+
+```{r}
+titanic.df=subset(train, select = c(Survived, Age, Fare))
+plot_margins <- ggplot(data = titanic.df, aes(x = Age, y = Fare, color = factor(Survived))) + geom_point() + 
+    scale_color_manual(values = c("red", "blue"))
+#display plot 
+plot_margins
+```
+
+```{r}
+svm_titanic<- svm(Survived ~ ., data = train, type = "C-classification", kernel = "linear", scale = TRUE)
+svm_titanic
+```
+
+
+```{r}
+plot(svm_titanic, train, Age~Fare)
+```
+
+
+```{r}
+svm_radial<- svm(Survived ~ ., data = train, type = "C-classification", kernel = "radial", scale = TRUE)
+pred_radial=predict(svm_radial,test)
+mean(pred_radial==test$Survived)
+```
+
+
+```{r}
+set.seed (123)
+tune.radial=tune(svm, factor(Survived)~., data=train,
+                 kernel ="radial", 
+                 type = "C-classification",
+                 ranges =list(cost=c(0.1,1,10,100),
+                              gamma=c(0.5,1,2,3,4)))
+```
+
+
+```{r}
+summary(tune.radial)
+```
+
+```{r}
+
+bestmod=tune.radial$best.model
+plot(bestmod, data=train, Age~Fare)
+```
+
+
+```{r}
+#Original SVM w/ train data
+table(true=train$Survived, pred=predict(svm_radial ,
+newdata=train))
+
+#Tuned SVM w/ train data
+#Use this model, true positive and true negative is better so it's more accurate
+table(true=train$Survived, pred=predict(tune.radial$best.model ,
+newdata=train))
+```
+
+
+2. Calculate the confusion matrix using the testing data.
+```{r}
+table(true=test$Survived, 
+      pred=predict(svm_radial,newdata=test))
+
+ce(test$Survived,
+   predict(svm_radial,newdata=test))
+```
+
+```{r}
+#Best SVM model (Tuned) w/ test data
+table(true=test$Survived,
+      pred=predict(tune.radial$best.model,newdata=test))
+
+#Confusion Error
+ce(test$Survived,predict(tune.radial$best.model
+                       ,newdata=test))
+```
+
+```{r echo=FALSE}
+# List of predictions
+svm.opt=svm(factor(Survived)~., data=train,
+                 kernel ="radial", 
+                 type = "C-classification",
+                 cost=1,gamma=0.5,decision.values=T)
+pred.roc=attributes(predict(svm.opt,test, decision.values=TRUE))$decision.values
+
+# List of predictions
+pred.list=list(pred.oob, pred.roc)
+
+# List of actual values
+nm=length(pred.list)
+actual=rep(list(test$Survived), nm)
+
+# Plot the ROC curves
+#library(ROCR)
+pred.r=prediction(pred.list, actual)
+roc.r=performance(pred.r, "tpr", "fpr")
+plot(roc.r, col = as.list(1:nm), main = "ROC Curves: Test Set")
+legend(x = "bottomright", 
+       legend = c("Boosting", "SVM"),
+       fill = 1:nm)
+```
+
+3. Explain your choices and communicate your results.
+
+From plotting Survived against Age and Fare, we could tell from the scatter plot that the data was going to be difficult to split. The SVM Classification plot proved that by classifying all data points as a 1 and no 0's. The mean prediction was 0.7552448 and when we tuned it the error rate was only 0.1996975 which is awesome. We then plotted the data on the Classification plot with the tuned data and were able to get slightly separated results. We then tested the accuracy of the tuned model with the confusion matrix and the tuned matrix had higher True Positive and Negative results, confirming that the tuning worked. The confusion matrix for the testing data showed similar results, so we know what this model is well-fit.
+
+## Part 6: Conclusion (20 points)
+
+1. (10 points) Based on the different classification models, which one do you think is the best model to predict `Survived`? Please consider the following in your response:
+
+    - Accuracy/error rates
+
+Logistic Regression:
+Accuracy = 74.13%
+Error Rate = 25.87%
+
+KNN:
+Accuracy = 69.23%
+Error Rate = 30.77%
+
+Boosting:
+Accuracy = 74.82%
+Error Rate = 25.17%
+
+SVM:
+Accuracy = 76.62%
+Error Rate = 22.37%
+
+Based on these accuracy and error rates, SVM is the best model to predict "Survived" because it has the highest accuracy rating of 76.62% and lowest error rate of 22.37%. 
+
+
+    - Do you think you can improve the model by adding any other information?
+    
+We think the model came out very well and don't think there is any other information that could have helped us.
+    
+2. (10 points) What are your learning outcomes for this assignment? Please focus on your learning outcomes in terms of statistical learning, model interpretations, and R skills - it is up to you to include this part in your presentation or not.
+
+We learned about the importance of knowing about the data set you are working with. We first went into writing the codes but we ran into errors so we had to go back and fix them. The easiest way to get information about our data set was to run Explanatory Data Analysis so that's what we did. Errors were coming from class of variables or NA's. We did a lot of factoring data and omitting NA's to be able to run our analysis. In order to compare the different models, we tried to use the metrics when possible. We liked this assignment because it was a great way to sum up the different techniques we have learned this year. Obviously making predictions is a hard thing to do but we are confident that with this analysis we would be able to predict our dependent variable "Survived" with good accuracy.
+
+
+
